@@ -1,31 +1,25 @@
 'use strict';
-/* =====================================================================
-   BoardEase – Boarding House / Dorm Rent Tracker
-   Plain HTML + CSS + JavaScript. All data lives in localStorage.
-   NOTE: This is a front-end-only demo. Passwords are lightly hashed in
-   the browser, which is NOT real security. A real deployment needs a
-   server and database.
-   ===================================================================== */
 
 /* ---------- Helpers ---------- */
-const KEY = 'boardease_v1', SESSION = 'boardease_session';
+const KEY = 'oppa_yopa_v1', SESSION = 'oppa_yopa_session';
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const pad = n => String(n).padStart(2, '0');
-const peso = n => '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const peso = n => { n = Number(n || 0); const whole = Math.abs(n - Math.round(n)) < 0.005; return '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2 }); };
 const toISO = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const todayStr = () => toISO(new Date());
 const curYM = () => todayStr().slice(0, 7);
 const addMonths = (ym, n) => { const [y, m] = ym.split('-').map(Number); const d = new Date(y, m - 1 + n, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
 const ymLabel = ym => { const [y, m] = ym.split('-').map(Number); return new Date(y, m - 1, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' }); };
 const fmtDate = s => { if (!s) return '—'; const d = new Date(s.length === 10 ? s + 'T00:00:00' : s); return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }); };
+const fmtShort = s => { const d = new Date(s); return d.toLocaleDateString('en-US', d.getFullYear() === new Date().getFullYear() ? { month: 'short', day: 'numeric' } : { year: 'numeric', month: 'short', day: 'numeric' }); };
 const hash = str => { let h = 5381; const s = 'be$' + str; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return 'h' + (h >>> 0).toString(36); };
 const randPass = () => { const c = 'abcdefghjkmnpqrstuvwxyz23456789'; let p = ''; for (let i = 0; i < 8; i++) p += c[Math.floor(Math.random() * c.length)]; return p; };
 const slug = n => n.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.|\.$/g, '').slice(0, 20);
 const METHOD = { cash: 'Cash', gcash: 'GCash', bank: 'Bank transfer' };
-const STATUS_LABEL = { paid: 'Paid', partial: 'Partial', overdue: 'Overdue', unpaid: 'Unpaid', upcoming: 'Upcoming', pending: 'Pending confirmation', confirmed: 'Confirmed', rejected: 'Rejected', open: 'Open', in_progress: 'In progress', resolved: 'Resolved' };
-const badge = (st, label) => `<span class="badge ${st}">${esc(label || STATUS_LABEL[st] || st)}</span>`;
+const STATUS_LABEL = { paid: 'Paid', partial: 'Partial', overdue: 'Overdue', unpaid: 'Unpaid', upcoming: 'Upcoming', pending: 'Pending confirmation', confirmed: 'Confirmed', rejected: 'Rejected', open: 'Open', in_progress: 'In progress', resolved: 'Resolved', important: 'Important', new: 'New' };
+const badge = (st, label) => `<span class="badge ${st}"><i></i>${esc(label || STATUS_LABEL[st] || st)}</span>`;
 
 /* ---------- Data layer ---------- */
 function seed() {
@@ -46,11 +40,12 @@ function seed() {
       pay(addMonths(curYM(), -1), 1000, 'gcash', '09171234567', 'confirmed')
     ],
     complaints: [],
-    settings: { boardName: 'BoardEase Dorm', gcashName: '', gcashNumber: '', bankName: '', bankAcct: '', bankHolder: '', instructions: '' }
+    announcements: [{ id: uid(), title: 'Welcome to Oppa Yopa', message: 'Notices from your owner will show up here.', priority: 'normal', roomId: null, date: now }],
+    settings: { boardName: 'Oppa Yopa Dorm', gcashName: '', gcashNumber: '', bankName: '', bankAcct: '', bankHolder: '', instructions: '' }
   };
 }
 function load() {
-  try { const r = JSON.parse(localStorage.getItem(KEY)); if (r && r.users) return r; } catch (e) { /* ignore */ }
+  try { const r = JSON.parse(localStorage.getItem(KEY)); if (r && r.users) { r.announcements = r.announcements || []; return r; } } catch (e) { /* ignore */ }
   const d = seed(); localStorage.setItem(KEY, JSON.stringify(d)); return d;
 }
 function save() { localStorage.setItem(KEY, JSON.stringify(db)); }
@@ -65,6 +60,35 @@ const roomName = id => (roomOf(id) || { name: '—' }).name;
 const tenantOf = id => db.tenants.find(t => t.id === id);
 const myTenant = () => db.tenants.find(t => t.userId === me.id);
 const leaseEnd = t => { const d = new Date(t.start + 'T00:00:00'); d.setMonth(d.getMonth() + Number(t.months)); d.setDate(d.getDate() - 1); return toISO(d); };
+
+/* Lease length in real days (start and end dates both count) */
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const dayDiff = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 864e5);
+function leaseDays(t) {
+  const end = leaseEnd(t), today = todayStr(), total = dayDiff(t.start, end) + 1;
+  if (today < t.start) return { state: 'upcoming', total, elapsed: 0, left: total, startsIn: dayDiff(today, t.start), endedAgo: 0 };
+  if (today > end) return { state: 'ended', total, elapsed: total, left: 0, startsIn: 0, endedAgo: dayDiff(end, today) };
+  const elapsed = dayDiff(t.start, today) + 1;
+  return { state: 'active', total, elapsed, left: total - elapsed, startsIn: 0, endedAgo: 0 };
+}
+function leaseShort(t) {
+  const L = leaseDays(t);
+  return L.state === 'active' ? `${plural(L.left, 'day')} left` : L.state === 'upcoming' ? `Starts in ${plural(L.startsIn, 'day')}` : 'Lease ended';
+}
+function leaseDetail(t) {
+  const L = leaseDays(t), pct = Math.round(L.elapsed / L.total * 100);
+  const line = L.state === 'active' ? `Day ${L.elapsed} of ${L.total} · ${plural(L.left, 'day')} left`
+    : L.state === 'upcoming' ? `Starts in ${plural(L.startsIn, 'day')}` : `Ended ${plural(L.endedAgo, 'day')} ago`;
+  return `${plural(L.total, 'day')} (${plural(+t.months, 'month')})<div class="prog" aria-hidden="true"><i style="width:${pct}%"></i></div><div class="muted small">${line}</div>`;
+}
+
+/* Online payment methods the owner has set up */
+function channels() {
+  const s = db.settings, c = [];
+  if ((s.gcashNumber || '').trim()) c.push('gcash');
+  if ((s.bankAcct || '').trim()) c.push('bank');
+  return c;
+}
 
 function monthInfo(t, ym) {
   const rent = +t.rent;
@@ -105,37 +129,110 @@ function toast(msg, err) {
 function openDlg(title, body, wide) {
   const d = $('#dlg'); d.className = wide ? 'wide' : '';
   d.innerHTML = `<div class="dlg-head"><h3>${esc(title)}</h3><button class="x" data-close aria-label="Close">×</button></div><div class="dlg-body">${body}</div>`;
+  labelTables(d);
   if (!d.open) d.showModal();
 }
 const closeDlg = () => { const d = $('#dlg'); if (d.open) d.close(); };
+
+/* Adds column labels to table cells so the CSS can turn rows into cards on small screens */
+function labelTables(root) {
+  if (!root || !root.querySelectorAll) return;
+  root.querySelectorAll('table').forEach(tb => {
+    const heads = [...tb.querySelectorAll('thead th')].map(h => h.textContent.trim());
+    tb.classList.add('resp');
+    tb.querySelectorAll('tbody tr').forEach(tr => [...tr.children].forEach((td, i) => {
+      if (td.dataset.label !== undefined || td.classList.contains('nolabel')) return;
+      if (heads[i]) { td.dataset.label = heads[i]; td.innerHTML = '<div class="cv">' + td.innerHTML + '</div>'; }
+      else td.classList.add('nolabel');
+    }));
+  });
+}
 function empty(msg) { return `<div class="empty">${esc(msg)}</div>`; }
 
 /* ---------- Auth ---------- */
 function login(f) {
   const u = db.users.find(x => x.username === f.username.trim().toLowerCase());
   if (!u || u.pass !== hash(f.password)) return toast('Wrong username or password.', true);
+  const prev = u.lastLogin || null;
   me = u; localStorage.setItem(SESSION, u.id); ui.page = u.role === 'owner' ? 'dashboard' : 'lease'; render();
+  showWelcome(prev);
+  u.lastLogin = new Date().toISOString(); save();
 }
 function logout() { me = null; localStorage.removeItem(SESSION); render(); }
 
 function loginView() {
-  return `<div class="login-wrap"><form class="login-card" data-form="login">
-    <div class="brand"><span class="logo">🏠</span>BoardEase</div>
-    <p class="sub">Sign in to manage or pay your boarding house rent.</p>
-    <div class="field"><label for="lu">Username</label><input id="lu" name="username" autocomplete="username" required autofocus></div>
-    <div class="field"><label for="lp">Password</label><input id="lp" name="password" type="password" autocomplete="current-password" required></div>
-    <button class="btn primary block">Sign in</button>
-    <div class="hint"><b>Demo accounts</b><br>Owner: <code>owner</code> / <code>owner123</code><br>Tenant: <code>juan</code> / <code>tenant123</code><br>Tenant accounts are created by the owner.</div>
-  </form></div>`;
+  const sample = ['paid', 'paid', 'paid', 'paid', 'partial', 'paid', 'paid', 'overdue', 'paid', 'paid', 'unpaid', 'upcoming'];
+  return `<div class="login">
+    <section class="login-art"><div class="brand">${LOGO}<div><b>Oppa Yopa</b></div></div>
+      <div><h1>Know who has paid before the month ends.</h1>
+      <p>Rent, leases and tenant reports for your boarding house, in one place.</p>
+      <span class="strip big" aria-hidden="true">${sample.map(k => `<i class="m ${k}"></i>`).join('')}</span></div>
+      <small>Records are saved in this browser.</small></section>
+    <form class="login-form" data-form="login">
+      <h2>Sign in</h2>
+      <p class="muted">Tenants: use the login your owner gave you.</p>
+      <div class="field"><label for="lu">Username</label><input id="lu" name="username" autocomplete="username" required autofocus></div>
+      <div class="field"><label for="lp">Password</label><input id="lp" name="password" type="password" autocomplete="current-password" required></div>
+      <button class="btn primary block">Sign in</button>
+      <details class="demo"><summary>Demo accounts</summary><p>Owner: <code>owner</code> / <code>owner123</code><br>Tenant: <code>juan</code> / <code>tenant123</code></p></details>
+    </form></div>`;
 }
 
 /* ---------- Shell ---------- */
-const OWNER_NAV = [['dashboard', '📊', 'Dashboard'], ['tenants', '👥', 'Tenants'], ['rooms', '🛏️', 'Rooms'], ['payments', '💳', 'Payments'], ['complaints', '📣', 'Reports'], ['settings', '⚙️', 'Settings']];
-const TENANT_NAV = [['lease', '📄', 'My Lease'], ['pay', '💸', 'Pay Rent'], ['history', '🧾', 'My Payments'], ['reports', '📣', 'Send a Report'], ['account', '🔑', 'Account']];
+/* ---------- Icons, logo and the month strip ---------- */
+const ICONS = {
+  dashboard: '<rect x="3" y="3" width="7" height="8" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="15" width="7" height="6" rx="1.5"/>',
+  tenants: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><circle cx="17.5" cy="9" r="2.5"/><path d="M17 14.2c2.7.2 4.5 2.1 4.5 5.3"/>',
+  rooms: '<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
+  payments: '<rect x="2.5" y="6" width="19" height="13" rx="2.5"/><path d="M2.5 10h19M6.5 15h3"/>',
+  complaints: '<path d="M4 4.5h16a1 1 0 0 1 1 1V16a1 1 0 0 1-1 1H9l-5 4V5.5a1 1 0 0 1 1-1z"/>',
+  announce: '<path d="M3 10v4h3l7 4V6L6 10z"/><path d="M17 9.5a4 4 0 0 1 0 5"/>',
+  settings: '<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>',
+  lease: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>',
+  pay: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/>',
+  history: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  account: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/>',
+  logout: '<path d="M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5"/><path d="M15 8l4 4-4 4M19 12H9"/>'
+};
+ICONS.notices = ICONS.announce; ICONS.reports = ICONS.complaints;
+const ico = n => `<svg class="ico" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n] || ''}</svg>`;
+const LOGO = '<svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="currentColor"/><rect x="7" y="9" width="5" height="14" rx="1.5" fill="#4ade80"/><rect x="13.5" y="9" width="5" height="14" rx="1.5" fill="#fbbf24"/><rect x="20" y="9" width="5" height="14" rx="1.5" fill="#f87171"/></svg>';
+const initials = n => n.split(/\s+/).filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+
+/* One bar per month so a tenant's payment history reads at a glance */
+function stripHTML(t, max = 12) {
+  const now = curYM();
+  const infos = monthsOf(t).filter(m => m <= now).map(m => monthInfo(t, m)).slice(-max);
+  if (!infos.length) return '<span class="muted small">Not started</span>';
+  const desc = i => `${ymLabel(i.ym)}: ${STATUS_LABEL[i.status]}${i.balance > 0 ? ', ' + peso(i.balance) + ' left' : ''}`;
+  return `<span class="strip" role="img" aria-label="${esc(infos.map(desc).join('. '))}">${infos.map(i => `<i class="m ${i.status}" title="${esc(desc(i))}"></i>`).join('')}</span>`;
+}
+const legendHTML = () => `<div class="legend-row">${[['paid', 'Paid'], ['partial', 'Partial'], ['unpaid', 'Unpaid'], ['overdue', 'Overdue']].map(([k, l]) => `<span class="lg"><i class="m ${k}"></i>${l}</span>`).join('')}</div>`;
+
+/* Month tiles for a whole lease; tenants can select a tile to pay that month */
+function calendarHTML(t, pay) {
+  const now = curYM();
+  return `<div class="cal">${monthsOf(t).map(m => {
+    const i = monthInfo(t, m), [y, mo] = m.split('-').map(Number);
+    const mon = new Date(y, mo - 1, 1).toLocaleString('en-US', { month: 'short' });
+    const sub = i.status === 'paid' ? 'Paid' : i.status === 'upcoming' ? peso(i.rent) : `${peso(i.balance)} left`;
+    const label = `${ymLabel(m)}: ${STATUS_LABEL[i.status]}${i.balance > 0 ? ', ' + peso(i.balance) + ' left' : ''}`;
+    const inner = `<span class="mn">${mon}</span><span class="my">${y}</span><span class="ms">${sub}</span>`;
+    const cls = `mo ${i.status}${m === now ? ' now' : ''}`;
+    return pay && availFor(t, m) > 0
+      ? `<button class="${cls}" data-action="payNow" data-ym="${m}" title="${esc(label)}. Select to pay.">${inner}</button>`
+      : `<div class="${cls}" title="${esc(label)}">${inner}</div>`;
+  }).join('')}</div>`;
+}
+
+const OWNER_NAV = [['dashboard', 'Dashboard'], ['tenants', 'Tenants'], ['rooms', 'Rooms'], ['payments', 'Payments'], ['complaints', 'Reports'], ['announce', 'Announcements'], ['settings', 'Settings']];
+const TENANT_NAV = [['lease', 'My lease'], ['notices', 'Announcements'], ['pay', 'Pay rent'], ['history', 'My payments'], ['reports', 'Send a report'], ['account', 'Account']];
+
 
 function navCount(id) {
   if (id === 'payments') return db.payments.filter(p => p.status === 'pending').length;
   if (id === 'complaints') return db.complaints.filter(c => c.status === 'open').length;
+  if (id === 'notices') return unreadAnn().length;
   return 0;
 }
 function render() {
@@ -143,14 +240,15 @@ function render() {
   if (!me) { app.innerHTML = loginView(); return; }
   const nav = me.role === 'owner' ? OWNER_NAV : TENANT_NAV;
   if (!nav.some(n => n[0] === ui.page)) ui.page = nav[0][0];
-  const pages = { dashboard: pgDashboard, tenants: pgTenants, rooms: pgRooms, payments: pgPayments, complaints: pgComplaints, settings: pgSettings, lease: pgLease, pay: pgPay, history: pgHistory, reports: pgReports, account: pgAccount };
+  const pages = { dashboard: pgDashboard, tenants: pgTenants, rooms: pgRooms, payments: pgPayments, complaints: pgComplaints, announce: pgAnnounce, notices: pgNotices, settings: pgSettings, lease: pgLease, pay: pgPay, history: pgHistory, reports: pgReports, account: pgAccount };
+  const content = pages[ui.page](); // built first so unread badges are current
   app.innerHTML = `<div class="shell"><aside class="side">
-    <div class="brand"><span class="logo">🏠</span>${esc(db.settings.boardName || 'BoardEase')}</div>
-    ${nav.map(([id, ic, lb]) => { const c = me.role === 'owner' ? navCount(id) : 0; return `<button class="nav-btn ${ui.page === id ? 'active' : ''}" data-action="nav" data-id="${id}"><span>${ic}</span>${lb}${c ? `<span class="count">${c}</span>` : ''}</button>`; }).join('')}
+    <div class="brand">${LOGO}<div><b>Oppa Yopa</b><small>${esc(db.settings.boardName || '')}</small></div></div>
+    <nav class="nav" aria-label="Main">${nav.map(([id, lb]) => { const c = navCount(id); return `<button class="nav-btn ${ui.page === id ? 'active' : ''}" data-action="nav" data-id="${id}"${ui.page === id ? ' aria-current="page"' : ''}>${ico(id)}<span class="lbl">${lb}</span>${c ? `<span class="count">${c}</span>` : ''}</button>`; }).join('')}</nav>
     <div class="spacer"></div>
-    <div class="who"><b>${esc(me.name)}</b><span>${me.role}</span></div>
-    <button class="nav-btn" data-action="logout"><span>🚪</span>Log out</button>
-  </aside><main>${pages[ui.page]()}</main></div>`;
+    <div class="who"><span class="av">${esc(initials(me.name))}</span><div><b>${esc(me.name)}</b><small>${me.role === 'owner' ? 'Owner' : 'Tenant'}</small></div></div>
+    <button class="nav-btn logout" data-action="logout">${ico('logout')}<span class="lbl">Log out</span></button>
+  </aside><main id="main">${content}</main></div>`;
 }
 
 /* =====================================================================
@@ -163,23 +261,32 @@ function pgDashboard() {
     if (monthsOf(t).includes(ym)) { const i = monthInfo(t, ym); expected += i.rent; collected += Math.min(i.paid, i.rent); }
     const s = tenantStatus(t); outstanding += s.balance; if (s.status === 'overdue') overdue++;
   });
-  const pending = db.payments.filter(p => p.status === 'pending').length;
+  const pct = expected ? Math.min(100, Math.round(collected / expected * 100)) : 0;
+  const pend = db.payments.filter(p => p.status === 'pending').sort((a, b) => a.date.localeCompare(b.date));
+  const open = db.complaints.filter(c => c.status === 'open').sort((a, b) => a.date.localeCompare(b.date));
+  const payItems = pend.slice(0, 5).map(p => {
+    const t = tenantOf(p.tenantId);
+    return `<li class="row-item"><div><b>${esc(t ? t.name : 'A tenant')}</b> paid ${peso(p.amount)} for ${ymLabel(p.month)}<div class="muted small">${METHOD[p.method]}${p.ref ? ' · ref ' + esc(p.ref) : ''}</div></div><div class="actions"><button class="btn sm ok" data-action="confirmPay" data-id="${p.id}">Confirm received</button><button class="btn sm" data-action="rejectPay" data-id="${p.id}">Reject</button></div></li>`;
+  }).join('') + (pend.length > 5 ? `<li class="row-item"><span class="muted">${pend.length - 5} more payments waiting</span><button class="btn sm" data-action="goto" data-id="payments">See all</button></li>` : '');
+  const repItems = open.slice(0, 3).map(c => {
+    const t = tenantOf(c.tenantId);
+    return `<li class="row-item"><div><b>${esc(t ? t.name : 'A tenant')}</b> reported “${esc(c.subject)}”<div class="muted small">${esc(c.category)}</div></div><button class="btn sm" data-action="goto" data-id="complaints">Read</button></li>`;
+  }).join('') + (open.length > 3 ? `<li class="row-item"><span class="muted">${open.length - 3} more reports</span><button class="btn sm" data-action="goto" data-id="complaints">See all</button></li>` : '');
+  const waiting = payItems || repItems ? `<section class="panel"><h3>Waiting for you</h3><ul class="rows">${payItems}${repItems}</ul></section>` : '';
   const rows = db.tenants.map(t => {
-    const s = tenantStatus(t); const i = monthsOf(t).includes(ym) ? monthInfo(t, ym) : null;
-    return `<tr><td><b>${esc(t.name)}</b></td><td>${esc(roomName(t.roomId))}</td>
-      <td class="num">${i ? peso(i.rent) : '—'}</td><td class="num">${i ? peso(i.paid) : '—'}</td>
-      <td class="num">${peso(s.balance)}</td><td>${statusBadge(s)}</td>
-      <td><button class="btn sm primary" data-action="recordPay" data-id="${t.id}">Record payment</button></td></tr>`;
+    const s = tenantStatus(t), i = monthsOf(t).includes(ym) ? monthInfo(t, ym) : null;
+    return `<tr><td><b>${esc(t.name)}</b><div class="muted small">${esc(roomName(t.roomId))}</div></td>
+      <td>${stripHTML(t)}</td><td class="num">${i ? `${peso(i.paid)} of ${peso(i.rent)}` : '—'}</td>
+      <td class="num">${s.balance > 0 ? peso(s.balance) : '—'}</td><td>${statusBadge(s)}</td>
+      <td>${s.balance > 0 ? `<button class="btn sm" data-action="recordPay" data-id="${t.id}">Record payment</button>` : ''}</td></tr>`;
   }).join('');
-  return `<div class="page-head"><div><h2>Dashboard</h2><p>${ymLabel(ym)} overview · ${esc(fmtDate(todayStr()))}</p></div></div>
-  <div class="cards">
-    <div class="stat"><small>Tenants</small><strong>${db.tenants.length}</strong></div>
-    <div class="stat"><small>Collected this month</small><strong>${peso(collected)}</strong><small>of ${peso(expected)} expected</small></div>
-    <div class="stat"><small>Total outstanding</small><strong>${peso(outstanding)}</strong></div>
-    <div class="stat"><small>Overdue accounts</small><strong style="color:var(--red)">${overdue}</strong></div>
-    <div class="stat click" data-action="nav" data-id="payments"><small>Awaiting your confirmation</small><strong style="color:var(--amber)">${pending}</strong></div>
-  </div>
-  <div class="card"><h3>Who has paid? (${ymLabel(ym)})</h3><div class="table-wrap">${rows ? `<table><thead><tr><th>Tenant</th><th>Room</th><th class="num">Rent</th><th class="num">Paid</th><th class="num">Balance owed</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : empty('No tenants yet. Go to Tenants to add one.')}</div></div>`;
+  return `<div class="page-head"><div><h2>Dashboard</h2><p>${ymLabel(ym)}</p></div></div>
+  <section class="summary"><div class="sum-main"><div class="k">Collected in ${new Date().toLocaleString('en-US', { month: 'long' })}</div><div class="big">${peso(collected)}</div>
+    <div class="meter" role="img" aria-label="${pct}% collected"><i style="width:${pct}%"></i></div><div class="sub">${pct}% of ${peso(expected)} expected</div></div>
+    <dl class="sum-facts"><div><dt>Outstanding</dt><dd>${peso(outstanding)}</dd></div><div><dt>Overdue</dt><dd class="${overdue ? 'neg' : ''}">${plural(overdue, 'tenant')}</dd></div><div><dt>Tenants</dt><dd>${db.tenants.length}</dd></div></dl></section>
+  ${waiting}
+  <section class="panel flush"><div class="panel-head"><h3>Who has paid</h3>${legendHTML()}</div>
+  <div class="table-wrap">${rows ? `<table><thead><tr><th>Tenant</th><th>Rent by month</th><th class="num">This month</th><th class="num">Balance</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : empty('No tenants yet. Go to Tenants to add one.')}</div></section>`;
 }
 
 /* --- Tenants --- */
@@ -200,12 +307,12 @@ function tenantRows() {
     return okQ && okF;
   });
   if (!list.length) return empty('No tenants match.');
-  return `<table><thead><tr><th>Tenant</th><th>Room</th><th class="num">Rent / mo</th><th>Due day</th><th>Lease</th><th class="num">Balance</th><th>Status</th><th></th></tr></thead><tbody>${list.map(t => {
+  return `<table><thead><tr><th>Tenant</th><th>Room</th><th class="num">Rent</th><th>Lease</th><th class="num">Balance</th><th>Status</th><th></th></tr></thead><tbody>${list.map(t => {
     const s = tenantStatus(t); const u = db.users.find(x => x.id === t.userId);
-    return `<tr><td><b>${esc(t.name)}</b><div class="muted small">${esc(t.contact)} · @${esc(u ? u.username : '?')}</div></td><td>${esc(roomName(t.roomId))}</td>
-      <td class="num">${peso(t.rent)}</td><td>${t.dueDay}</td><td class="small">${fmtDate(t.start)}<br>to ${fmtDate(leaseEnd(t))}</td>
-      <td class="num">${peso(s.balance)}</td><td>${statusBadge(s)}</td>
-      <td><div class="actions"><button class="btn sm" data-action="viewTenant" data-id="${t.id}">Ledger</button><button class="btn sm" data-action="recordPay" data-id="${t.id}">Pay</button><button class="btn sm" data-action="editTenant" data-id="${t.id}">Edit</button><button class="btn sm" data-action="resetPw" data-id="${t.id}">Reset pw</button><button class="btn sm danger" data-action="delTenant" data-id="${t.id}">Delete</button></div></td></tr>`;
+    return `<tr class="click" data-action="viewTenant" data-id="${t.id}"><td><b>${esc(t.name)}</b><div class="muted small">@${esc(u ? u.username : '?')} · ${esc(t.contact)}</div></td><td>${esc(roomName(t.roomId))}</td>
+      <td class="num">${peso(t.rent)}</td><td>Until ${fmtDate(leaseEnd(t))}<div class="muted small">${leaseShort(t)}</div></td>
+      <td class="num">${s.balance > 0 ? peso(s.balance) : '—'}</td><td>${statusBadge(s)}</td>
+      <td><button class="btn sm" data-action="viewTenant" data-id="${t.id}">Open</button></td></tr>`;
   }).join('')}</tbody></table>`;
 }
 function tenantForm(t) {
@@ -230,15 +337,14 @@ function tenantForm(t) {
 function credDialog(name, username, password) {
   openDlg('Tenant account ready', `<p>Give these login details to <b>${esc(name)}</b>. They can change the password after logging in.</p>
     <div class="cred">Username: <b>${esc(username)}</b><br>Password: <b>${esc(password)}</b></div>
-    <button class="btn block" data-action="copy" data-text="${esc('BoardEase login\nUsername: ' + username + '\nPassword: ' + password)}">Copy to clipboard</button>`);
+    <button class="btn block" data-action="copy" data-text="${esc('Oppa Yopa login\nUsername: ' + username + '\nPassword: ' + password)}">Copy to clipboard</button>`);
 }
 function ledgerHTML(t) {
-  const infos = monthsOf(t).map(m => monthInfo(t, m));
   const pays = db.payments.filter(p => p.tenantId === t.id).sort((a, b) => b.date.localeCompare(a.date));
-  return `<dl class="kv"><dt>Room</dt><dd>${esc(roomName(t.roomId))}</dd><dt>Rent</dt><dd>${peso(t.rent)} / month, due every ${t.dueDay}th</dd><dt>Lease</dt><dd>${fmtDate(t.start)} – ${fmtDate(leaseEnd(t))}</dd><dt>Deposit</dt><dd>${peso(t.deposit)}</dd><dt>Contact</dt><dd>${esc(t.contact)}</dd></dl>
-  <h3 style="margin:18px 0 8px">Monthly schedule</h3><div class="table-wrap"><table><thead><tr><th>Month</th><th class="num">Rent</th><th class="num">Paid</th><th class="num">Balance</th><th>Status</th></tr></thead><tbody>
-  ${infos.map(i => `<tr><td>${ymLabel(i.ym)}</td><td class="num">${peso(i.rent)}</td><td class="num">${peso(i.paid)}</td><td class="num">${peso(i.balance)}</td><td>${infoBadge(i)}</td></tr>`).join('')}</tbody></table></div>
-  <h3 style="margin:18px 0 8px">Payment history</h3>${paymentTable(pays, false, false)}`;
+  return `<div class="actions" style="margin-bottom:18px"><button class="btn primary sm" data-action="recordPay" data-id="${t.id}">Record payment</button><button class="btn sm" data-action="editTenant" data-id="${t.id}">Edit details</button><button class="btn sm" data-action="resetPw" data-id="${t.id}">Reset password</button><button class="btn sm danger" data-action="delTenant" data-id="${t.id}">Delete tenant</button></div>
+  <dl class="kv"><dt>Room</dt><dd>${esc(roomName(t.roomId))}</dd><dt>Rent</dt><dd>${peso(t.rent)} / month, due every ${t.dueDay}th</dd><dt>Lease</dt><dd>${fmtDate(t.start)} – ${fmtDate(leaseEnd(t))}</dd><dt>Duration</dt><dd>${leaseDetail(t)}</dd><dt>Deposit</dt><dd>${peso(t.deposit)}</dd><dt>Contact</dt><dd>${esc(t.contact)}</dd></dl>
+  <h3 class="sub">Lease calendar</h3>${calendarHTML(t, false)}${legendHTML()}
+  <h3 class="sub">Payment history</h3><div class="table-wrap">${paymentTable(pays, false, false)}</div>`;
 }
 
 /* --- Rooms --- */
@@ -251,28 +357,28 @@ function pgRooms() {
     <button class="btn primary">Add room</button></form></div>
   <div class="card"><h3>Your rooms</h3>${db.rooms.length ? `<div class="table-wrap"><table><thead><tr><th>Room</th><th>Occupancy</th><th class="num">Rate</th><th></th></tr></thead><tbody>${db.rooms.map(r => {
     const occ = db.tenants.filter(t => t.roomId === r.id);
-    return `<tr><td><b>${esc(r.name)}</b></td><td>${occ.length}/${r.capacity}<div class="muted small">${occ.map(t => esc(t.name)).join(', ') || 'Vacant'}</div></td><td class="num">${peso(r.rate)}</td><td><button class="btn sm danger" data-action="delRoom" data-id="${r.id}">Delete</button></td></tr>`;
+    return `<tr><td><b>${esc(r.name)}</b></td><td><span class="beds" role="img" aria-label="${occ.length} of ${r.capacity} beds taken">${Array.from({ length: r.capacity }, (_, k) => `<i class="${k < occ.length ? 'on' : ''}"></i>`).join('')}</span> <span class="small">${occ.length}/${r.capacity}</span><div class="muted small">${occ.map(t => esc(t.name)).join(', ') || 'Vacant'}</div></td><td class="num">${peso(r.rate)}</td><td><button class="btn sm danger" data-action="delRoom" data-id="${r.id}">Delete</button></td></tr>`;
   }).join('')}</tbody></table></div>` : empty('No rooms yet.')}</div></div>`;
 }
 
 /* --- Payments (owner) --- */
-function paymentTable(list, owner, showTenant = true) {
+function paymentTable(list, owner, showTenant = true, showStatus = true) {
   if (!list.length) return empty('No payments found.');
-  return `<table><thead><tr><th>Date</th>${showTenant ? '<th>Tenant</th>' : ''}<th>For month</th><th class="num">Amount</th><th>Method</th><th>Reference</th><th>Status</th>${owner ? '<th></th>' : ''}</tr></thead><tbody>${list.map(p => {
+  return `<table><thead><tr><th>Date</th>${showTenant ? '<th>Tenant</th>' : ''}<th>For month</th><th class="num">Amount</th><th>Method</th><th>Reference</th>${showStatus ? '<th>Status</th>' : ''}${owner ? '<th></th>' : ''}</tr></thead><tbody>${list.map(p => {
     const t = tenantOf(p.tenantId);
     let act = '';
     if (owner) {
       if (p.status === 'pending') act = `<button class="btn sm ok" data-action="confirmPay" data-id="${p.id}">Confirm received</button><button class="btn sm danger" data-action="rejectPay" data-id="${p.id}">Reject</button>`;
       else if (p.status === 'confirmed') act = `<button class="btn sm danger" data-action="voidPay" data-id="${p.id}">Void</button>`;
     }
-return `<tr><td class="small">${fmtDate(p.date)}</td>${showTenant ? `<td>${esc(t ? t.name : 'Deleted')}</td>` : ''}<td>${ymLabel(p.month)}</td><td class="num">${peso(p.amount)}</td>
-      <td>${METHOD[p.method]}${p.method === 'cash' ? '<div class="muted small">recorded by owner</div>' : ''}</td><td class="small">${esc(p.ref) || '—'}${p.note ? `<div class="muted">${esc(p.note)}</div>` : ''}</td><td>${badge(p.status)}</td>${owner ? `<td><div class="actions">${act}</div></td>` : ''}</tr>`;
+    return `<tr><td class="small nw">${fmtShort(p.date)}</td>${showTenant ? `<td class="nw">${esc(t ? t.name : 'Deleted')}</td>` : ''}<td class="nw">${ymLabel(p.month)}</td><td class="num">${peso(p.amount)}</td>
+      <td class="nw">${METHOD[p.method]}${p.method === 'cash' ? '<div class="muted small">by owner</div>' : ''}</td><td class="small"><span class="nw">${esc(p.ref) || '—'}</span>${p.note ? `<div class="muted">${esc(p.note)}</div>` : ''}</td>${showStatus ? `<td>${badge(p.status)}</td>` : ''}${owner ? `<td><div class="actions">${act}</div></td>` : ''}</tr>`;
   }).join('')}</tbody></table>`;
 }
 function pgPayments() {
   const pend = db.payments.filter(p => p.status === 'pending').sort((a, b) => a.date.localeCompare(b.date));
   return `<div class="page-head"><div><h2>Payments</h2><p>Confirm GCash/bank payments, and record cash payments.</p></div><button class="btn primary" data-action="recordPay" data-id="">+ Record payment</button></div>
-    <div class="card"><h3>Awaiting confirmation (${pend.length})</h3><p class="muted small" style="margin-top:-6px">Check your GCash or bank app for the reference number before confirming.</p><div class="table-wrap">${pend.length ? paymentTable(pend, true) : empty('Nothing to confirm right now.')}</div></div>
+  <div class="card"><h3>Awaiting confirmation (${pend.length})</h3><p class="muted small" style="margin-top:-6px">Check your GCash or bank app for the reference number before confirming.</p><div class="table-wrap">${pend.length ? paymentTable(pend, true, true, false) : empty('Nothing to confirm right now.')}</div></div>
   <div class="card"><h3>Payment history</h3><div class="toolbar">
     <input data-live="pq" value="${esc(ui.pq)}" placeholder="Search tenant or reference…" aria-label="Search payments">
     <select data-live="pf" aria-label="Filter payments">${['all', 'confirmed', 'pending', 'rejected', 'cash', 'gcash', 'bank'].map(v => `<option value="${v}" ${ui.pf === v ? 'selected' : ''}>${v === 'all' ? 'All' : (STATUS_LABEL[v] || METHOD[v])}</option>`).join('')}</select>
@@ -296,7 +402,8 @@ function payForm(tenantId, isOwner) {
   const tenantField = isOwner
     ? `<div class="field"><label>Tenant</label><select id="pf-t" name="tenantId">${db.tenants.map(x => `<option value="${x.id}" ${x.id === t.id ? 'selected' : ''}>${esc(x.name)} – ${esc(roomName(x.roomId))}</option>`).join('')}</select></div>`
     : `<input type="hidden" id="pf-t" name="tenantId" value="${t.id}">`;
-  const methods = isOwner ? ['cash', 'gcash', 'bank'] : ['gcash', 'bank'];
+  const methods = isOwner ? ['cash', 'gcash', 'bank'] : channels();
+  if (!methods.length) return '<p class="muted">Online payment is not available yet.</p>';
   return `<form data-form="${isOwner ? 'ownerPay' : 'tenantPay'}">${tenantField}
     <div class="field"><label>Pay for month</label><select id="pf-m" name="month" required>${monthOptions(t, sel)}</select></div>
     <div class="field"><label>Payment method</label><div class="method-pick">${methods.map((m, i) => `<label><input type="radio" name="method" value="${m}" ${i === 0 ? 'checked' : ''}>${METHOD[m]}</label>`).join('')}</div></div>
@@ -310,7 +417,7 @@ function syncAmount() {
   const t = tenantOf(tid.value); if (!t || !m.value) { a.value = ''; return; }
   const av = availFor(t, m.value); a.value = av > 0 ? av : ''; a.max = av;
 }
- 
+
 /* --- Complaints (owner) --- */
 function pgComplaints() {
   const list = db.complaints.filter(c => ui.cf === 'all' || c.status === ui.cf).sort((a, b) => b.date.localeCompare(a.date));
@@ -329,7 +436,8 @@ function complaintCards(list, owner) {
       ${owner ? `<div style="margin-top:10px"><button class="btn sm" data-action="respond" data-id="${c.id}">Update / reply</button></div>` : ''}</div>`;
   }).join('');
 }
- /* --- Settings --- */
+
+/* --- Settings --- */
 function pgSettings() {
   const s = db.settings;
   return `<div class="page-head"><div><h2>Settings</h2><p>Payment details shown to tenants when they pay.</p></div></div>
@@ -350,7 +458,7 @@ function pwCard() {
     <div class="field"><label>New password (min 6 characters)</label><input type="password" name="pw" minlength="6" required></div>
     <button class="btn primary">Update password</button></form></div>`;
 }
- 
+
 /* =====================================================================
    TENANT PAGES
    ===================================================================== */
@@ -359,28 +467,29 @@ function pgLease() {
   const t = myTenant(); if (!t) return noLease();
   const s = tenantStatus(t); const infos = monthsOf(t).map(m => monthInfo(t, m));
   const next = infos.find(i => i.balance > 0);
-  return `<div class="page-head"><div><h2>My Lease</h2><p>Hello, ${esc(t.name)}</p></div><button class="btn primary" data-action="payNow" data-ym="">Pay rent</button></div>
+  return `<div class="page-head"><div><h2>My lease</h2><p>${esc(t.name)} · ${esc(roomName(t.roomId))}</p></div><button class="btn primary" data-action="payNow" data-ym="">Pay rent</button></div>
   ${s.status === 'overdue' ? `<div class="alert red">You have an overdue balance of ${peso(s.balance)}. Please pay as soon as possible.</div>` : s.balance > 0 ? `<div class="alert amber">Outstanding balance: ${peso(s.balance)}.</div>` : ''}
-  <div class="cards"><div class="stat"><small>Balance now</small><strong>${peso(s.balance)}</strong></div>
-    <div class="stat"><small>Monthly rent</small><strong>${peso(t.rent)}</strong></div>
-    <div class="stat"><small>Next payment due</small><strong>${next ? fmtDate(next.due) : 'All paid'}</strong></div></div>
-  <div class="two"><div class="card"><h3>Lease details</h3><dl class="kv"><dt>Room</dt><dd>${esc(roomName(t.roomId))}</dd><dt>Lease period</dt><dd>${fmtDate(t.start)} – ${fmtDate(leaseEnd(t))} (${t.months} mo)</dd><dt>Rent due</dt><dd>Every ${t.dueDay}th of the month</dd><dt>Deposit</dt><dd>${peso(t.deposit)}</dd><dt>Contact on file</dt><dd>${esc(t.contact)}</dd></dl></div></div>
-  <div class="card"><h3>Monthly rent schedule</h3><div class="table-wrap"><table><thead><tr><th>Month</th><th>Due date</th><th class="num">Rent</th><th class="num">Paid</th><th class="num">Balance</th><th>Status</th><th></th></tr></thead><tbody>
+  <section class="summary"><div class="sum-main"><div class="k">Balance now</div><div class="big ${s.status === 'overdue' ? 'neg' : ''}">${peso(s.balance)}</div><div class="sub">${next ? 'Next due ' + fmtDate(next.due) : 'You are all paid up'}</div></div>
+    <dl class="sum-facts"><div><dt>Monthly rent</dt><dd>${peso(t.rent)}</dd></div><div><dt>Lease</dt><dd>${leaseShort(t)}</dd></div><div><dt>Deposit</dt><dd>${peso(t.deposit)}</dd></div></dl></section>
+  <section class="panel"><h3>Lease calendar</h3>${calendarHTML(t, true)}${legendHTML()}<p class="muted small" style="margin:12px 0 0">Select a month to pay it.</p></section>
+  <section class="panel"><h3>Lease details</h3><dl class="facts"><div><dt>Room</dt><dd>${esc(roomName(t.roomId))}</dd></div><div><dt>Lease period</dt><dd>${fmtDate(t.start)} – ${fmtDate(leaseEnd(t))}</dd></div><div><dt>Rent due</dt><dd>Every ${t.dueDay}th of the month</dd></div><div><dt>Contact on file</dt><dd>${esc(t.contact)}</dd></div><div class="wide"><dt>Duration</dt><dd>${leaseDetail(t)}</dd></div></dl></section>
+  <section class="panel flush"><details class="sched" ${window.innerWidth > 900 ? 'open' : ''}><summary><h3>Monthly rent schedule</h3></summary><div class="table-wrap"><table><thead><tr><th>Month</th><th>Due date</th><th class="num">Rent</th><th class="num">Paid</th><th class="num">Balance</th><th>Status</th><th></th></tr></thead><tbody>
   ${infos.map(i => `<tr><td>${ymLabel(i.ym)}</td><td>${fmtDate(i.due)}</td><td class="num">${peso(i.rent)}</td><td class="num">${peso(i.paid)}${i.methods.length ? `<div class="muted small">via ${i.methods.map(m => METHOD[m].toLowerCase()).join(', ')}</div>` : ''}</td><td class="num">${peso(i.balance)}</td>
   <td>${infoBadge(i)}${i.pending > 0 ? `<div class="muted small">${peso(i.pending)} awaiting confirmation</div>` : ''}</td>
-  <td>${availFor(t, i.ym) > 0 ? `<button class="btn sm" data-action="payNow" data-ym="${i.ym}">Pay</button>` : ''}</td></tr>`).join('')}</tbody></table></div></div>`;
+  <td>${availFor(t, i.ym) > 0 ? `<button class="btn sm" data-action="payNow" data-ym="${i.ym}">Pay</button>` : ''}</td></tr>`).join('')}</tbody></table></div></details></section>`;
 }
 function pgPay() {
   const t = myTenant(); if (!t) return noLease(); const s = db.settings;
-  const hasDetails = s.gcashNumber || s.bankAcct;
-  return `<div class="page-head"><div><h2>Pay Rent</h2><p>Pay through GCash or bank, then submit the reference number.</p></div></div>
-  <div class="two"><div class="card"><h3>1. Send your payment</h3>
-    ${s.gcashNumber ? `<div class="cmp"><b>GCash</b><br>${esc(s.gcashName)}<br><b>${esc(s.gcashNumber)}</b></div>` : ''}
-    ${s.bankAcct ? `<div class="cmp"><b>${esc(s.bankName || 'Bank')}</b><br>${esc(s.bankHolder)}<br><b>${esc(s.bankAcct)}</b></div>` : ''}
-    ${hasDetails ? '' : '<div class="note">Your owner has not added GCash/bank details yet. Please ask them.</div>'}
+  const ch = channels(), hasDetails = ch.length > 0;
+  const method = (title, who, num) => `<div class="method-card"><div><div class="muted small">${esc(title)}</div><div class="num-big">${esc(num)}</div><div class="small">${esc(who)}</div></div><button class="btn sm" data-action="copy" data-text="${esc(num)}">Copy number</button></div>`;
+  return `<div class="page-head"><div><h2>Pay rent</h2><p>Send your payment by GCash or bank, then submit the reference number.</p></div></div>
+  <div class="two"><section class="panel"><h3>Send your payment</h3>
+    ${ch.includes('gcash') ? method('GCash', s.gcashName, s.gcashNumber) : ''}
+    ${ch.includes('bank') ? method(s.bankName || 'Bank', s.bankHolder, s.bankAcct) : ''}
+    ${hasDetails ? '' : '<div class="alert amber">Online payment is not available yet. Your owner has not set up a GCash number or bank account. You can pay in cash, or ask your owner to add their payment details.</div>'}
     ${s.instructions ? `<div class="note">${esc(s.instructions)}</div>` : ''}
-    <div class="note"><b>Paying in cash?</b> Hand it to your owner. They will record it and it will appear in your payments as “paid via cash”.</div></div>
-  <div class="card"><h3>2. Submit for confirmation</h3>${payForm(t.id, false)}</div></div>`;
+    <div class="note"><b>Paying in cash?</b> Hand it to your owner. They will record it and it will appear in your payments as paid via cash.</div></section>
+  <section class="panel"><h3>Submit for confirmation</h3>${hasDetails ? payForm(t.id, false) : '<p class="muted">You can submit a GCash or bank payment here once your owner adds their payment details.</p>'}</section></div>`;
 }
 function pgHistory() {
   const t = myTenant(); if (!t) return noLease();
@@ -401,9 +510,94 @@ function pgReports() {
 function pgAccount() {
   return `<div class="page-head"><div><h2>Account</h2><p>Signed in as <b>@${esc(me.username)}</b></p></div></div><div style="max-width:440px">${pwCard()}</div>`;
 }
+
 /* =====================================================================
    FORM HANDLERS
    ===================================================================== */
+/* =====================================================================
+   ANNOUNCEMENTS AND SIGN-IN PANEL
+   ===================================================================== */
+const annFor = t => db.announcements.filter(a => !a.roomId || a.roomId === t.roomId).sort((a, b) => b.date.localeCompare(a.date));
+const annTargets = a => db.tenants.filter(t => !a.roomId || t.roomId === a.roomId);
+const annAudience = a => a.roomId ? `${roomName(a.roomId)} only` : 'All tenants';
+function unreadAnn() {
+  const t = me && myTenant(); if (!t) return [];
+  const seen = me.seenAnn || [];
+  return annFor(t).filter(a => !seen.includes(a.id));
+}
+const annBody = s => esc(s).replace(/\n/g, '<br>');
+
+function pgAnnounce() {
+  const list = [...db.announcements].sort((a, b) => b.date.localeCompare(a.date));
+  const roomOpts = db.rooms.map(r => `<option value="${r.id}">${esc(r.name)} only</option>`).join('');
+  return `<div class="page-head"><div><h2>Announcements</h2><p>Post a notice your tenants will see when they sign in.</p></div></div>
+  <div class="two"><div class="card"><h3>New announcement</h3><form data-form="announce">
+    <div class="grid2"><div class="field"><label for="an-to">Send to</label><select id="an-to" name="audience"><option value="all">All tenants</option>${roomOpts}</select></div>
+    <div class="field"><label for="an-pr">Priority</label><select id="an-pr" name="priority"><option value="normal">Normal</option><option value="important">Important</option></select></div></div>
+    <div class="field"><label for="an-t">Title</label><input id="an-t" name="title" maxlength="80" required placeholder="e.g. Water interruption on Friday"></div>
+    <div class="field"><label for="an-m">Message</label><textarea id="an-m" name="message" required></textarea></div>
+    <button class="btn primary">Post announcement</button></form></div>
+  <div class="card"><h3>Posted (${list.length})</h3>${list.length ? list.map(a => {
+    const tg = annTargets(a);
+    const seen = tg.filter(t => { const u = db.users.find(x => x.id === t.userId); return u && (u.seenAnn || []).includes(a.id); }).length;
+    return `<div class="cmp"><div class="cmp-head"><b>${esc(a.title)}</b>${a.priority === 'important' ? badge('important') : ''}</div>
+      <div class="muted small">To: ${esc(annAudience(a))} · ${fmtDate(a.date)} · Seen by ${seen} of ${tg.length}</div>
+      <p style="margin:8px 0">${annBody(a.message)}</p>
+      <button class="btn sm danger" data-action="delAnn" data-id="${a.id}">Delete</button></div>`;
+  }).join('') : empty('Nothing posted yet.')}</div></div>`;
+}
+
+function pgNotices() {
+  const t = myTenant(); if (!t) return noLease();
+  const fresh = unreadAnn().map(a => a.id);
+  const list = annFor(t);
+  // opening this page counts as reading; the "New" tags below still show for this visit
+  if (fresh.length) { me.seenAnn = [...new Set([...(me.seenAnn || []), ...fresh])]; save(); }
+  return `<div class="page-head"><div><h2>Announcements</h2><p>Notices from your owner.</p></div></div>
+  <div class="card">${list.length ? list.map(a => `<div class="cmp"><div class="cmp-head"><b>${esc(a.title)}</b><span>${fresh.includes(a.id) ? badge('new') + ' ' : ''}${a.priority === 'important' ? badge('important') : ''}</span></div>
+    <div class="muted small">${fmtDate(a.date)}</div><p style="margin:8px 0 0">${annBody(a.message)}</p></div>`).join('') : empty('No announcements yet.')}</div>`;
+}
+
+/* Panel shown once after signing in: what needs attention (owner) or what changed (tenant) */
+function listItems(arr, fn, max = 5) {
+  const out = arr.slice(0, max).map(fn);
+  if (arr.length > max) out.push(`<li class="muted">and ${arr.length - max} more</li>`);
+  return out;
+}
+function showWelcome(prev) {
+  const isNew = iso => !prev || (iso && iso > prev);
+  const tag = iso => isNew(iso) ? ' <span class="badge new">New</span>' : '';
+  const sec = (title, items, page, label) => items.length
+    ? `<div class="wl-sec"><h4>${title}</h4><ul class="wl-list">${items.join('')}</ul><button class="btn sm" data-action="goto" data-id="${page}">${label}</button></div>` : '';
+  let title, body = '';
+  if (me.role === 'owner') {
+    title = 'While you were away';
+    const pend = db.payments.filter(p => p.status === 'pending').sort((a, b) => b.date.localeCompare(a.date));
+    const open = db.complaints.filter(c => c.status === 'open').sort((a, b) => b.date.localeCompare(a.date));
+    const over = db.tenants.filter(t => tenantStatus(t).status === 'overdue');
+    body = sec(`${plural(pend.length, 'payment')} waiting for your confirmation`, listItems(pend, p => {
+      const t = tenantOf(p.tenantId);
+      return `<li><b>${esc(t ? t.name : 'A tenant')}</b> paid ${peso(p.amount)} for ${ymLabel(p.month)} via ${METHOD[p.method]}${p.ref ? ' (ref ' + esc(p.ref) + ')' : ''}.${tag(p.date)}</li>`;
+    }), 'payments', 'Review payments')
+      + sec(`${plural(open.length, 'new report')} from tenants`, listItems(open, c => {
+        const t = tenantOf(c.tenantId);
+        return `<li><b>${esc(t ? t.name : 'A tenant')}</b>: ${esc(c.subject)}.${tag(c.date)}</li>`;
+      }), 'complaints', 'Read reports')
+      + sec(`${plural(over.length, 'tenant')} with overdue rent`, listItems(over, t => `<li><b>${esc(t.name)}</b> owes ${peso(tenantStatus(t).balance)}.</li>`), 'tenants', 'View tenants');
+  } else {
+    const t = myTenant(); if (!t) return;
+    title = `Welcome back, ${me.name.split(' ')[0]}`;
+    const anns = unreadAnn();
+    const pays = db.payments.filter(p => p.tenantId === t.id && p.resolvedAt && isNew(p.resolvedAt));
+    const reps = db.complaints.filter(c => c.tenantId === t.id && c.updatedAt && isNew(c.updatedAt));
+    body = sec(`${plural(anns.length, 'new announcement')}`, listItems(anns, a => `<li><b>${esc(a.title)}</b>${a.priority === 'important' ? ' ' + badge('important') : ''}<div class="muted small">${fmtDate(a.date)}</div></li>`), 'notices', 'Read announcements')
+      + sec('Payment updates', listItems(pays, p => `<li>Your ${peso(p.amount)} payment for ${ymLabel(p.month)} was ${p.status === 'confirmed' ? 'confirmed' : 'rejected' + (p.note ? ': ' + esc(p.note) : '')}.</li>`), 'history', 'View payments')
+      + sec('Report updates', listItems(reps, c => `<li>Your owner updated “${esc(c.subject)}” to <b>${STATUS_LABEL[c.status]}</b>.</li>`), 'reports', 'View reports');
+  }
+  if (!body) return;
+  openDlg(title, body + '<div class="actions"><button class="btn primary" data-close>Got it</button></div>');
+}
+
 const forms = {
   login,
   addTenant(f) {
@@ -424,11 +618,15 @@ const forms = {
   ownerPay(f) { submitPayment(f, true); },
   tenantPay(f) { submitPayment(f, false); },
   addRoom(f) { db.rooms.push({ id: uid(), name: f.name.trim(), capacity: +f.capacity, rate: +f.rate }); save(); render(); toast('Room added.'); },
+  announce(f, form) {
+    db.announcements.push({ id: uid(), title: f.title.trim(), message: f.message.trim(), priority: f.priority, roomId: f.audience === 'all' ? null : f.audience, date: new Date().toISOString() });
+    save(); render(); toast('Announcement posted.');
+  },
   complaint(f) {
     db.complaints.push({ id: uid(), tenantId: myTenant().id, category: f.category, subject: f.subject.trim(), message: f.message.trim(), status: 'open', reply: '', date: new Date().toISOString() });
     save(); render(); toast('Report sent to your owner.');
   },
-  respond(f) { const c = db.complaints.find(x => x.id === f.id); c.status = f.status; c.reply = f.reply.trim(); save(); closeDlg(); render(); toast('Report updated.'); },
+  respond(f) { const c = db.complaints.find(x => x.id === f.id); c.status = f.status; c.reply = f.reply.trim(); c.updatedAt = new Date().toISOString(); save(); closeDlg(); render(); toast('Report updated.'); },
   settings(f) { Object.assign(db.settings, f); save(); render(); toast('Settings saved.'); },
   changePw(f, form) {
     if (me.pass !== hash(f.old)) return toast('Current password is wrong.', true);
@@ -440,17 +638,24 @@ function submitPayment(f, isOwner) {
   if (!t || !f.month) return toast('Choose a month to pay.', true);
   const av = availFor(t, f.month);
   if (!(amount > 0) || amount > av + 0.001) return toast(`Amount must be between ₱1 and ${peso(av)}.`, true);
+  if (!isOwner && !channels().includes(f.method)) return toast('Your owner has not set up that payment method yet.', true);
   if (f.method !== 'cash' && !f.ref.trim()) return toast('Please enter the reference number.', true);
   db.payments.push({ id: uid(), tenantId: t.id, month: f.month, amount, method: f.method, ref: f.ref.trim(), note: f.note.trim(), status: isOwner ? 'confirmed' : 'pending', date: new Date().toISOString(), by: isOwner ? 'owner' : 'tenant' });
   save(); closeDlg(); ui.payMonth = '';
   if (!isOwner) ui.page = 'history';
   render(); toast(isOwner ? 'Payment recorded.' : 'Submitted! Your owner will confirm it.');
 }
-  /* =====================================================================
+
+/* =====================================================================
    EVENT HANDLING (delegated)
    ===================================================================== */
 const actions = {
   nav: d => { ui.page = d.id; render(); },
+  goto: d => { closeDlg(); ui.page = d.id; render(); },
+  delAnn: d => {
+    if (!confirm('Delete this announcement? Tenants will no longer see it.')) return;
+    db.announcements = db.announcements.filter(a => a.id !== d.id); save(); render(); toast('Announcement deleted.');
+  },
   logout,
   copy: d => { (navigator.clipboard ? navigator.clipboard.writeText(d.text) : Promise.reject()).then(() => toast('Copied.'), () => toast('Copy failed – select the text manually.', true)); },
   addTenant: () => openDlg('Add tenant', tenantForm(null)),
@@ -461,10 +666,11 @@ const actions = {
     if (!confirm(`Delete ${t.name}, their login, payments and reports? This cannot be undone.`)) return;
     db.users = db.users.filter(u => u.id !== t.userId); db.payments = db.payments.filter(p => p.tenantId !== t.id);
     db.complaints = db.complaints.filter(c => c.tenantId !== t.id); db.tenants = db.tenants.filter(x => x.id !== t.id);
-    save(); render(); toast('Tenant deleted.');
+    save(); closeDlg(); render(); toast('Tenant deleted.');
   },
   resetPw: d => {
     const t = tenantOf(d.id); const u = db.users.find(x => x.id === t.userId); if (!u) return;
+    if (!confirm(`Reset the password for ${t.name}? Their current password will stop working right away.`)) return;
     const p = randPass(); u.pass = hash(p); save(); credDialog(t.name, u.username, p);
   },
   delRoom: d => {
@@ -478,15 +684,15 @@ const actions = {
   confirmPay: d => {
     const p = db.payments.find(x => x.id === d.id); const t = tenantOf(p.tenantId); const i = monthInfo(t, p.month);
     if (i.paid + p.amount > i.rent + 0.001) return toast('This would exceed the rent for that month. Reject or void another payment first.', true);
-    p.status = 'confirmed'; p.confirmedAt = new Date().toISOString(); save(); render(); toast('Payment confirmed.');
+    p.status = 'confirmed'; p.confirmedAt = p.resolvedAt = new Date().toISOString(); save(); render(); toast('Payment confirmed.');
   },
   rejectPay: d => {
     const why = prompt('Reason for rejecting (the tenant will see this):', 'Payment not received'); if (why === null) return;
-    const p = db.payments.find(x => x.id === d.id); p.status = 'rejected'; p.note = why; save(); render(); toast('Payment rejected.');
+    const p = db.payments.find(x => x.id === d.id); p.status = 'rejected'; p.note = why; p.resolvedAt = new Date().toISOString(); save(); render(); toast('Payment rejected.');
   },
   voidPay: d => {
     if (!confirm('Void this confirmed payment? The balance will increase again.')) return;
-    const p = db.payments.find(x => x.id === d.id); p.status = 'rejected'; p.note = 'Voided by owner'; save(); render(); toast('Payment voided.');
+    const p = db.payments.find(x => x.id === d.id); p.status = 'rejected'; p.note = 'Voided by owner'; p.resolvedAt = new Date().toISOString(); save(); render(); toast('Payment voided.');
   },
   respond: d => {
     const c = db.complaints.find(x => x.id === d.id);
@@ -497,14 +703,15 @@ const actions = {
   payNow: d => { ui.payMonth = d.ym || ''; ui.page = 'pay'; render(); },
   backup: () => {
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' }));
-    a.download = `boardease-backup-${todayStr()}.json`; a.click(); URL.revokeObjectURL(a.href);
+    a.download = `oppa-yopa-backup-${todayStr()}.json`; a.click(); URL.revokeObjectURL(a.href);
   },
   resetAll: () => {
     if (!confirm('Erase ALL data and restore the demo data?')) return;
     localStorage.removeItem(KEY); localStorage.removeItem(SESSION); db = load(); me = null; render();
   }
 };
- document.addEventListener('click', e => {
+
+document.addEventListener('click', e => {
   if (e.target.closest('[data-close]')) return closeDlg();
   if (e.target.id === 'dlg') return closeDlg();
   const el = e.target.closest('[data-action]'); if (!el) return;
@@ -531,6 +738,10 @@ document.addEventListener('change', e => {
   if (e.target.id === 'pf-m') syncAmount();
 });
 function refreshRows() {
+  refreshRowsRaw();
+  labelTables($('#rows'));
+}
+function refreshRowsRaw() {
   const box = $('#rows'); if (!box) return;
   if (ui.page === 'tenants') box.innerHTML = tenantRows();
   else if (ui.page === 'payments') box.innerHTML = paymentRows();
@@ -538,11 +749,14 @@ function refreshRows() {
 }
 /* the Pay Rent page needs its amount filled once rendered */
 const _render = render;
-render = function () { _render(); if (me && me.role === 'tenant' && ui.page === 'pay') syncAmount(); };
- 
+render = function () {
+  _render();
+  if (me) labelTables($('#app'));
+  if (me && me.role === 'tenant' && ui.page === 'pay') syncAmount();
+};
+
 /* ---------- Start ---------- */
 db = load();
 me = db.users.find(u => u.id === localStorage.getItem(SESSION)) || null;
 if (me) ui.page = me.role === 'owner' ? 'dashboard' : 'lease';
 render();
-                                                                                                                                                                                                                                  
