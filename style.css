@@ -26,6 +26,7 @@ code{font:.85em ui-monospace,Menlo,Consolas,monospace;background:var(--soft);pad
 .small{font-size:.84rem}
 .neg{color:var(--overdue-ink)}
 .ico{flex:none}
+.nav-btn .fa-solid{width:20px;text-align:center;flex:none;font-size:18px}
 
 /* ---------- Shell ---------- */
 .shell{display:grid;grid-template-columns:248px 1fr;min-height:100vh}

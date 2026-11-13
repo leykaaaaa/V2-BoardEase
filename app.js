@@ -164,7 +164,7 @@ function loginView() {
   const sample = ['paid', 'paid', 'paid', 'paid', 'partial', 'paid', 'paid', 'overdue', 'paid', 'paid', 'unpaid', 'upcoming'];
   return `<div class="login">
     <section class="login-art"><div class="brand">${LOGO}<div><b>Oppa Yopa</b></div></div>
-      <div><h1>Know who has paid before the month ends.</h1>
+      <div><h1>Know if your 'Oppa' has been paid or not.</h1>
       <p>Rent, leases and tenant reports for your boarding house, in one place.</p>
       <span class="strip big" aria-hidden="true">${sample.map(k => `<i class="m ${k}"></i>`).join('')}</span></div>
       <small>Records are saved in this browser.</small></section>
@@ -182,20 +182,20 @@ function loginView() {
 /* ---------- Icons, logo and the month strip ---------- */
 const ICONS = {
   dashboard: '<rect x="3" y="3" width="7" height="8" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="15" width="7" height="6" rx="1.5"/>',
-  tenants: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><circle cx="17.5" cy="9" r="2.5"/><path d="M17 14.2c2.7.2 4.5 2.1 4.5 5.3"/>',
-  rooms: '<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
-  payments: '<rect x="2.5" y="6" width="19" height="13" rx="2.5"/><path d="M2.5 10h19M6.5 15h3"/>',
-  complaints: '<path d="M4 4.5h16a1 1 0 0 1 1 1V16a1 1 0 0 1-1 1H9l-5 4V5.5a1 1 0 0 1 1-1z"/>',
-  announce: '<path d="M3 10v4h3l7 4V6L6 10z"/><path d="M17 9.5a4 4 0 0 1 0 5"/>',
-  settings: '<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>',
-  lease: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>',
-  pay: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/>',
-  history: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
-  account: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/>',
-  logout: '<path d="M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5"/><path d="M15 8l4 4-4 4M19 12H9"/>'
+  tenants: '<i class="fa-solid fa-users" aria-hidden="true"></i>',
+  rooms: '<i class="fa-solid fa-house" aria-hidden="true"></i>',
+  payments: '<i class="fa-solid fa-wallet" aria-hidden="true"></i>',
+  complaints: '<i class="fa-solid fa-message" aria-hidden="true"></i>',
+  announce: '<i class="fa-solid fa-bullhorn" aria-hidden="true"></i>',
+  settings: '<i class="fa-solid fa-sliders" aria-hidden="true"></i>',
+  lease: '<i class="fa-solid fa-file-lines" aria-hidden="true"></i>',
+  pay: '<i class="fa-solid fa-money-bill" aria-hidden="true"></i>',
+  history: '<i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>',
+  account: '<i class="fa-solid fa-circle-user" aria-hidden="true"></i>',
+  logout: '<i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i>'
 };
 ICONS.notices = ICONS.announce; ICONS.reports = ICONS.complaints;
-const ico = n => `<svg class="ico" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n] || ''}</svg>`;
+const ico = n => { const icon = ICONS[n] || ''; return icon.startsWith('<i ') ? icon : `<svg class="ico" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon}</svg>`; };
 const LOGO = '<svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="currentColor"/><rect x="7" y="9" width="5" height="14" rx="1.5" fill="#4ade80"/><rect x="13.5" y="9" width="5" height="14" rx="1.5" fill="#fbbf24"/><rect x="20" y="9" width="5" height="14" rx="1.5" fill="#f87171"/></svg>';
 const initials = n => n.split(/\s+/).filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase();
 
